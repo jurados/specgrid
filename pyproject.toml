@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snspectra"
+version = "0.1.0"
+description = "Supernova spectra preprocessing: constant-velocity log grid, continuum division, and apodization."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+authors = [
+    { name = "jurados", email = "astro.jurados@gmail.com" }
+]
+
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pandas>=2.0",
+    "matplotlib>=3.6",
+    "tqdm>=4.60",
+]
+
+[project.urls]
+Repository = "https://github.com/jurados/spectra_normalized_grid"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["snspectra*"]
