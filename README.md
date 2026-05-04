@@ -1,4 +1,4 @@
-# snspectra
+# specgrid
 
 A Python library for preprocessing supernova spectra onto a fixed, logarithmically-spaced wavelength grid with constant velocity resolution.
 
