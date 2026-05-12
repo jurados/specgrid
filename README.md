@@ -4,7 +4,7 @@ A Python library for preprocessing supernova spectra onto a fixed, logarithmical
 
 ## Overview
 
-Observed spectra come with arbitrary wavelength ranges and varying resolutions. `snspectra` places every spectrum on the same master grid — from 3000 to 11000 Å — where each bin corresponds to a fixed velocity step `dv` in km/s:
+Observed spectra come with arbitrary wavelength ranges and varying resolutions. `specgrid` places every spectrum on the same master grid — from 3000 to 11000 Å — where each bin corresponds to a fixed velocity step `dv` in km/s:
 
 ```
 Δlog₁₀(λ) = dv / c / ln(10)  →  constant resolution in velocity space
@@ -26,7 +26,7 @@ pip install git+https://github.com/jurados/spectra_normalized_grid.git
 
 ```python
 import numpy as np
-from snspectra import Spectra
+from specgrid import Spectra
 
 # --- Synthetic supernova spectrum at arbitrary resolution ---
 wave = np.linspace(4000, 9000, 1500)          # arbitrary wavelength range and sampling
@@ -95,7 +95,7 @@ Returns a `pd.DataFrame` with one row per spectrum and columns:
 
 ## Settings
 
-Default wavelength range and bin count are defined in `snspectra/settings.py`:
+Default wavelength range and bin count are defined in `specgrid/settings.py`:
 
 ```python
 settings = {
