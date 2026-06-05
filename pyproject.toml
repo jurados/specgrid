@@ -3,7 +3,7 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "snspectra"
+name = "specgrid"
 version = "0.1.0"
 description = "Supernova spectra preprocessing: constant-velocity log grid, continuum division, and apodization."
 readme = "README.md"
@@ -27,4 +27,4 @@ Repository = "https://github.com/jurados/spectra_normalized_grid"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["snspectra*"]
+include = ["specgrid*"]
