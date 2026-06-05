@@ -10,8 +10,9 @@ from .settings import settings
 # =============================================
 
 class Spectra():
-    """"
-    Class for preprocessing spectra data for the SNeMPhyVAE model.
+    """
+    General-purpose class for preprocessing and normalizing spectra.
+    Supports any spectral data (not SN-specific).
     """
 
     def __init__(self, dv=200, dvsmooth=2000):
@@ -24,47 +25,6 @@ class Spectra():
         self.spectra_nbins    = self._compute_nbins(dv)
         self.initial_settings['spectra_nbins'] = self.spectra_nbins
 
-    def obtain_data(self):
-        """
-        Load and filter the spectra data to remove entries with all NaN flux values.
-
-        Returns:
-        --------
-        data: '~pd.DataFrame'
-            Filtered DataFrame containing only spectra with valid flux data.
-        """
-        data = self._load_data()
-        mask = data.flux.apply(lambda x: np.all(np.isnan(x)))
-        return data[~mask].copy().reset_index(drop=True)
-
-    def _observed2restframe(self, spectrum):
-        """
-        Generates the wavelength grid and extracts non-zero flux indices.
-        Also performs de-redshifting to the rest-frame.
-
-        Parameters:
-        -----------
-        spectrum: `~pd.Series`
-            Spectral record that must contain 'lambda_min_grid', 'lambda_max_grid',
-            and 'flux' keys.
-
-        Returns:
-        --------
-        flux: `~np.ndarray`
-        wave_range: `~np.ndarray`
-        mask: `~np.ndarray`
-        """
-        wave_range = np.logspace(
-            np.log10(spectrum.lambda_min_grid),
-            np.log10(spectrum.lambda_max_grid),
-            spectrum.nlambda_grid
-        )
-        redshift   = np.nan_to_num(float(spectrum['redshift']))
-        wave_range = wave_range / (1 + redshift)
-        flux       = spectrum['flux'].copy()
-        mask       = ~np.isnan(flux)
-        return flux, wave_range, mask
-
     def normalize_spectrum(self, flux, spectra_dict):
         """
         Normalizes the spectrum using the minmax method.
@@ -73,6 +33,7 @@ class Spectra():
         -----------
         flux: '~np.ndarray'
         spectra_dict: dict
+            Must contain 'mask' and 'flux_normalized' keys.
 
         Returns:
         --------
@@ -91,38 +52,6 @@ class Spectra():
         )
         return spectra_dict['flux_normalized']
 
-    def continuum_fitting(self, flux, wave, spectra_dict, nknots=13):
-        """
-        Obtain the continuum fitting of a given spectrum using spline interpolation.
-
-        Parameters:
-        -----------
-        flux: '~np.ndarray'
-        wave: '~np.ndarray'
-        spectra_dict: dict
-        nknots: int
-
-        Returns:
-        --------
-        flux_continuum: '~np.ndarray'
-        """
-        mask         = spectra_dict['mask']
-        flux_working = spectra_dict['flux_smooth']
-        wave_spline  = wave[mask]
-        flux_spline  = flux_working[mask]
-
-        indx       = np.linspace(0, len(wave_spline) - 1, nknots, dtype=int)
-        wave_knots = wave_spline[indx]
-        flux_knots = flux_spline[indx]
-
-        spline      = UnivariateSpline(wave_knots, flux_knots, k=3, s=0)
-        spline_point = spline(wave)
-
-        spectra_dict['flux_spline']          = spline_point
-        spectra_dict['flux_continuum'][mask] = flux[mask] / spline_point[mask]
-
-        return spectra_dict['flux_continuum']
-
     def apodization(self, flux, dflux, spectra_dict, fraction=0.05):
         """
         Apply apodization to the spectrum using a cosine bell window at the edges.
@@ -132,6 +61,7 @@ class Spectra():
         flux: '~np.ndarray'
         dflux: '~np.ndarray'
         spectra_dict: dict
+            Must contain 'mask', 'flux_apodized', and 'dflux_apodized' keys.
         fraction: float
             Fraction of the spectrum to taper (default 5%).
 
@@ -154,7 +84,7 @@ class Spectra():
         window[-n_apod:] = np.sin(x[::-1]) ** 2
 
         spectra_dict['flux_apodized'][mask]  = apod_flux  * window
-        spectra_dict['dflux_apodized'][mask] = apod_dflux * window
+        spectra_dict['dflux_apodized'][mask] = apod_dflux * np.maximum(window, 1e-3)
 
         return spectra_dict['flux_apodized'], spectra_dict['dflux_apodized']
 
@@ -201,7 +131,14 @@ class Spectra():
         valid      = flux_fine.notna()
         orig_wave  = sn.loc[valid, 'wave'].values
         orig_flux  = flux_fine[valid].values
-        orig_dflux = dflux_est[valid].values
+        orig_dflux = dflux_est[valid].values.copy()
+
+        # Fallback: if rolling std yields all NaN (e.g. too few points), use 10% of median flux
+        fill_dflux = np.nanmedian(np.abs(orig_flux)) * 0.1
+        if np.all(np.isnan(orig_dflux)):
+            orig_dflux = np.full_like(orig_flux, fill_dflux)
+        else:
+            orig_dflux[np.isnan(orig_dflux)] = fill_dflux
 
         flux_grid  = np.interp(wave_grid, orig_wave, orig_flux,  left=np.nan, right=np.nan)
         dflux_grid = np.interp(wave_grid, orig_wave, orig_dflux, left=np.nan, right=np.nan)
@@ -295,10 +232,11 @@ class Spectra():
                 redshift = np.nan_to_num(float(spectrum.get('redshift', 0.0)))
                 wave = wave / (1 + redshift)
 
-            dflux = np.nan_to_num(
-                dflux,
-                nan=np.nanmean(dflux) if not np.all(np.isnan(dflux)) else 1e-20
-            )
+            # Robust dflux initialisation before gridding
+            if np.all(np.isnan(dflux)):
+                dflux = np.full_like(flux, np.nanmedian(np.abs(flux)) * 0.1)
+            else:
+                dflux = np.nan_to_num(dflux, nan=np.nanmedian(dflux[~np.isnan(dflux)]))
 
             # 1. Resample to master log-spaced grid at constant velocity resolution
             wave_grid, flux_grid, dflux_grid = self.grid_spectrum(wave, flux, dflux)
@@ -314,6 +252,10 @@ class Spectra():
 
             flux_grid  = np.nan_to_num(flux_grid,  nan=0.0)
             dflux_grid = np.nan_to_num(dflux_grid, nan=0.0)
+
+            # Fill remaining zero dflux inside the valid region with median uncertainty
+            fill_dflux = np.nanmedian(dflux_grid[dflux_grid > 0]) if np.any(dflux_grid > 0) else 1e-20
+            dflux_grid[mask & (dflux_grid == 0)] = fill_dflux
 
             # 2. Continuum via coarse smoothing
             flux_continuum = np.zeros_like(flux_grid)
@@ -342,12 +284,12 @@ class Spectra():
             final_flux, final_dflux = self.apodization(flux_cont, dflux_cont, spectra_dict)
 
             results.append({
-                'oid':       spectrum['oid'],
-                'mjd':       spectrum['mjd'],
-                'redshift':  spectrum.get('redshift', np.nan),
-                'wave':      wave_grid,
-                'flux':      final_flux,
-                'dflux':     final_dflux,
+                'oid':        spectrum['oid'],
+                'mjd':        spectrum['mjd'],
+                'redshift':   spectrum.get('redshift', np.nan),
+                'wave':       wave_grid,
+                'flux':       final_flux,
+                'dflux':      final_dflux,
                 'flux_nnorm': flux_grid,
                 'flux_cont':  flux_continuum,
                 'flux_org':   spectrum['flux'].copy(),
@@ -394,9 +336,10 @@ class Spectra():
             return wave
         return np.logspace(np.log10(wave.min()), np.log10(wave.max()), target_size)
 
-    def smooth_spectrum(self, spectrum, wave, method='moving_average', velocity=10000, polyorder=2, target_size=None):
+    def smooth_spectrum(self, spectrum, wave, method='moving_average', velocity=10000, polyorder=2, target_size=None, dvariance=None):
         """
         Smooth a spectrum using a window with constant width in velocity space.
+        Optionally propagates variance through the smoothing kernel.
 
         Parameters:
         ------------
@@ -409,10 +352,15 @@ class Spectra():
             Polynomial order for Savitzky-Golay filter.
         target_size: int or None
             If given, resample the smoothed spectrum to this size via log-interpolation.
+        dvariance: '~np.ndarray' or None
+            Variance array (dflux**2) to propagate through the smoothing kernel.
+            Only supported for 'moving_average'. If provided, returns
+            (flux_smoothed, dflux_smoothed) instead of flux_smoothed.
 
         Returns:
         --------
         flux_smoothed: np.ndarray
+            or (flux_smoothed, dflux_smoothed) if dvariance is given.
         """
         from scipy.signal import savgol_filter
 
@@ -426,15 +374,26 @@ class Spectra():
             if polyorder >= window_size:
                 polyorder = max(1, window_size - 1)
             flux_smoothed = savgol_filter(spectrum, window_length=window_size, polyorder=polyorder, mode='interp')
+
         elif method == 'moving_average':
             kernel        = np.ones(window_size) / window_size
             flux_smoothed = np.convolve(spectrum, kernel, mode='same')
 
+        # Variance propagation: Var(avg) = sum(sigma_i^2) / N^2
+        # Only implemented for moving_average.
+        if dvariance is not None:
+            dvariance_smoothed = np.convolve(dvariance, kernel, mode='same') / window_size
+
         if target_size is None:
+            if dvariance is not None:
+                return flux_smoothed, np.sqrt(dvariance_smoothed)
             return flux_smoothed
 
         log_wave_tgt  = np.linspace(np.log10(wave.min()), np.log10(wave.max()), target_size)
         flux_smoothed = np.interp(log_wave_tgt, np.log10(wave), flux_smoothed)
+        if dvariance is not None:
+            dvariance_smoothed = np.interp(log_wave_tgt, np.log10(wave), dvariance_smoothed)
+            return flux_smoothed, np.sqrt(dvariance_smoothed)
         return flux_smoothed
 
 
@@ -449,7 +408,9 @@ if __name__ == "__main__":
         0.8 * np.exp(-0.5 * ((wave - 6150) / 150) ** 2)
         - 0.4 * np.exp(-0.5 * ((wave - 5900) / 150) ** 2)
     )
-    flux = continuum * (1 + p_cygni) + np.random.normal(0, 0.05, size=len(wave))
+    noise = np.random.normal(0, 0.05, size=len(wave))
+    flux  = continuum * (1 + p_cygni) + noise
+    dflux = np.abs(noise) * 0.5 + 0.01
 
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(wave, flux, alpha=0.9)
@@ -461,9 +422,17 @@ if __name__ == "__main__":
     spectrum = pd.DataFrame({
         'wave':  wave,
         'flux':  flux,
-        'dflux': np.random.normal(0, 0.01, size=len(wave)),
+        'dflux': dflux,
     })
 
     processor = Spectra()
-    result    = processor.reduce_spectrum(spectrum)
+
+    # Test dvariance propagation in smooth_spectrum
+    flux_s, dflux_s = processor.smooth_spectrum(
+        flux, wave, method='moving_average', velocity=5000, dvariance=dflux**2
+    )
+    print(f"Smoothed flux range: [{flux_s.min():.4f}, {flux_s.max():.4f}]")
+    print(f"Propagated dflux range: [{dflux_s.min():.6f}, {dflux_s.max():.6f}]")
+
+    result = processor.reduce_spectrum(spectrum)
     print(result)
